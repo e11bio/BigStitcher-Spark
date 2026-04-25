@@ -106,6 +106,9 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 	@Option(names = { "--illumCombine" }, description = "defines how images of different illuminations of the same Tile are combined in the stitching process, AVERAGE or PICK_BRIGHTEST (default: PICK_BRIGHTEST)")
 	protected ActionType illumCombine = ActionType.PICK_BRIGHTEST;
 
+	@Option(names = { "-w", "--useWholeImage" }, description = "ignore ViewRegistration translations when computing pairwise overlap; phase correlation runs on the full tile images rather than the stage-position-predicted overlap region. Useful when stage positions are unreliable (stage error > predicted overlap width). Slower than the default (FFT scales with full tile voxel count) but immune to stage-position mispositioning of the FFT window. (default: false)")
+	protected boolean useWholeImage = false;
+
 	@Override
 	public Void call() throws Exception
 	{
@@ -178,6 +181,7 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 		// setup parameters
 		final boolean doSubpixel = !disableSubpixelResolution;
 		final int numPeaks = this.peaksToCheck;
+		final boolean useWholeImage = this.useWholeImage;
 		final ActionType channelCombine = this.channelCombine;
 		final ActionType illumCombine = this.illumCombine;
 
@@ -200,6 +204,7 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 			final PairwiseStitchingParameters params = new PairwiseStitchingParameters();
 			params.doSubpixel = doSubpixel;
 			params.peaksToCheck = numPeaks;
+			params.useWholeImage = useWholeImage;
 
 			final GroupedViewAggregator gva = new GroupedViewAggregator();
 			//gva.addAction( ActionType.PICK_SPECIFIC, Illumination.class, new Illumination( 0 ) );
