@@ -164,8 +164,13 @@ public class SparkPairwiseStitching extends AbstractSelectableViews
 
 		List< ? extends Pair< ? extends Group< ? extends ViewId >, ? extends Group< ? extends ViewId > > > groupedPairs =  grouping.getComparisons();
 
-		// remove non-overlapping comparisons
-		final List< Pair< Group< ViewId >, Group< ViewId > > > removedPairs = TransformationTools.filterNonOverlappingPairs( (List)grouping.getComparisons(), dataGlobal.getViewRegistrations(), dataGlobal.getSequenceDescription() );
+		// remove non-overlapping comparisons. filterNonOverlappingPairs mutates
+		// the input list in place. We must pass groupedPairs itself (the same
+		// reference later sent to Spark), not a fresh grouping.getComparisons()
+		// — that returns a new list each call, so mutating it has no effect on
+		// what gets parallelized and every pair (incl. ~99% non-overlapping)
+		// would be FFT'd. Was producing N-choose-2 PC attempts at scale.
+		final List< Pair< Group< ViewId >, Group< ViewId > > > removedPairs = TransformationTools.filterNonOverlappingPairs( (List)groupedPairs, dataGlobal.getViewRegistrations(), dataGlobal.getSequenceDescription() );
 		System.out.println( new Date( System.currentTimeMillis() ) + ": Removed " + removedPairs.size() + " non-overlapping view-pairs for computing." );
 
 		System.out.println( "(" + new Date( System.currentTimeMillis() ) + "): For the following pairs pairwise stitching will be computed:");
