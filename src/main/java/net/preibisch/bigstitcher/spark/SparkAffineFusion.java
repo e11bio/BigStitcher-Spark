@@ -39,6 +39,7 @@ import org.apache.spark.SparkConf;
 import org.apache.spark.api.java.JavaRDD;
 import org.apache.spark.api.java.JavaSparkContext;
 import org.janelia.saalfeldlab.n5.DataType;
+import org.janelia.saalfeldlab.n5.DatasetAttributes;
 import org.janelia.saalfeldlab.n5.N5FSWriter;
 import org.janelia.saalfeldlab.n5.N5Reader;
 import org.janelia.saalfeldlab.n5.N5Writer;
@@ -233,7 +234,7 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 		{
 			System.out.println( "Exception: " + e);
 			System.out.println( "Error, container '" + outPathURI + "' does not exist. Please create it with create-fusion-container.");
-			return null;
+			System.exit( 1 );
 		}
 
 		final N5Writer driverVolumeWriter = N5Util.createN5Writer( outPathURI, storageType );
@@ -307,6 +308,44 @@ public class SparkAffineFusion extends AbstractInfrastructure implements Callabl
 				driverVolumeWriter.getAttribute( "/", "Bigstitcher-Spark/MultiResolutionInfos", MultiResolutionLevelInfo[][].class );
 
 		System.out.println( "Loaded " + mrInfos.length + " metadata object for fused " + storageType + " volume(s)" );
+
+		// The MultiResolutionInfos above come from the container's attributes, which
+		// create-container rewrites from the (new) bounding box even when it leaves the
+		// existing datasets at their old dimensions -- N5Writer.createDataset() is a
+		// silent no-op on an already-existing dataset. Trusting them then overflows the
+		// s0 write into zarr chunk padding and makes the s1..sN downsample grid read past
+		// the end of the source CellImg, surfacing as an opaque executor-side
+		// ArrayIndexOutOfBoundsException in FallbackPrimitiveBlocks.copy. Verify the
+		// stored geometry against what is actually on disk before doing any work.
+		for ( final MultiResolutionLevelInfo[] mrInfoSet : mrInfos )
+		{
+			for ( final MultiResolutionLevelInfo level : mrInfoSet )
+			{
+				final DatasetAttributes onDisk = driverVolumeWriter.getDatasetAttributes( level.dataset );
+
+				if ( onDisk == null )
+				{
+					System.out.println( "Error, dataset '" + level.dataset + "' listed in the container metadata does not exist. "
+							+ "The container is incomplete; re-create it with create-fusion-container." );
+					driverVolumeWriter.close();
+					System.exit( 1 );
+				}
+
+				if ( !Arrays.equals( onDisk.getDimensions(), level.dimensions ) )
+				{
+					System.out.println( "Error, container is inconsistent: dataset '" + level.dataset + "' has dimensions "
+							+ Arrays.toString( onDisk.getDimensions() ) + " on disk, but the container metadata "
+							+ "(Bigstitcher-Spark/MultiResolutionInfos) says " + Arrays.toString( level.dimensions ) + "." );
+					System.out.println( "This happens when create-fusion-container was re-run over an existing container "
+							+ "after the bounding box changed: createDataset() does not resize existing datasets, so the "
+							+ "arrays keep the old shape while the metadata records the new one. Fusing anyway would write "
+							+ "out-of-shape data into chunk padding and crash while building the multi-resolution pyramid." );
+					System.out.println( "Delete the container and re-create it with create-fusion-container." );
+					driverVolumeWriter.close();
+					System.exit( 1 );
+				}
+			}
+		}
 
 		final double[] maskOff = Import.csvStringToDoubleArray(maskOffset);
 
