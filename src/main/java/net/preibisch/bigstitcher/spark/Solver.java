@@ -447,6 +447,22 @@ public class Solver extends AbstractRegistration
 		final ArrayList< Pair< Pair< ViewId, ViewId >, PairwiseResult< ? > > > pairs = new ArrayList<>();
 		final HashSet< ViewId > connectedViews = new HashSet<>();
 
+		// Resolve each view's current registration ONCE, sequentially, into a private copy.
+		// ViewRegistration.updateModel() rebuilds (identity + in-place concatenate) a SHARED
+		// AffineTransform3D and getModel() returns that same instance; calling them from the
+		// parallel pair tasks below races whenever two pairs share a view (every view does),
+		// yielding doubled/torn transforms for the points of that view -> the solve then
+		// transports all non-fixed views as a rigid block by (multiples of) the view's
+		// registration while still reporting clean convergence.
+		final HashMap< ViewId, AffineTransform3D > viewModels = new HashMap<>();
+
+		for ( final ViewId viewId : viewIdsGlobal )
+		{
+			final ViewRegistration vr = dataGlobal.getViewRegistrations().getViewRegistration( viewId );
+			vr.updateModel();
+			viewModels.put( viewId, vr.getModel().copy() );
+		}
+
 		final ForkJoinPool pool = new ForkJoinPool( Math.max( 32, Runtime.getRuntime().availableProcessors() ) );
 
 		try
@@ -494,12 +510,9 @@ public class Solver extends AbstractRegistration
 						return;
 					}
 
-				final ViewRegistration vRegA = dataGlobal.getViewRegistrations().getViewRegistration( vA );
-				final ViewRegistration vRegB = dataGlobal.getViewRegistrations().getViewRegistration( vB );
-
-				vRegA.updateModel(); vRegB.updateModel();
-				final AffineTransform3D mA = vRegA.getModel();
-				final AffineTransform3D mB = vRegB.getModel();
+				// thread-safe: private copies resolved sequentially above (see comment there)
+				final AffineTransform3D mA = viewModels.get( vA );
+				final AffineTransform3D mB = viewModels.get( vB );
 
 				// iterate over all pairs of labels
 				for ( final String labelA : labelMap.get( vA ).keySet() )
