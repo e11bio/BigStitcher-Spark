@@ -25,11 +25,14 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -444,8 +447,11 @@ public class Solver extends AbstractRegistration
 		final ArrayList< Pair< ViewId, String > > ipsToLoad = new ArrayList<>();
 		viewIdsGlobal.forEach( viewId -> labelMap.get( viewId ).forEach( (label, weight) -> ipsToLoad.add( new ValuePair<>( viewId, label ) ) ));
 
-		final ArrayList< Pair< Pair< ViewId, ViewId >, PairwiseResult< ? > > > pairs = new ArrayList<>();
-		final HashSet< ViewId > connectedViews = new HashSet<>();
+		// both are filled from the parallel loop below, so they have to tolerate it: a plain
+		// ArrayList can drop or corrupt an element when two threads append at once
+		final List< Pair< Pair< ViewId, ViewId >, PairwiseResult< ? > > > pairs =
+				Collections.synchronizedList( new ArrayList<>() );
+		final Set< ViewId > connectedViews = ConcurrentHashMap.newKeySet();
 
 		// Resolve each view's current registration ONCE, sequentially, into a private copy.
 		// ViewRegistration.updateModel() rebuilds (identity + in-place concatenate) a SHARED
@@ -574,6 +580,16 @@ public class Solver extends AbstractRegistration
 		}
 
 		pool.shutdown();
+
+		// The tasks finish in whatever order the pool ran them, and that order decides which
+		// point matches each tile accumulates first - and so the order its model fit sums
+		// them in, down to the last bits. Put the pairs in a canonical order so a run is
+		// reproducible.
+		pairs.sort(
+				Comparator.comparing( ( Pair< Pair< ViewId, ViewId >, PairwiseResult< ? > > p ) -> p.getA().getA() )
+						.thenComparing( p -> p.getA().getB() )
+						.thenComparing( p -> p.getB().getLabelA() )
+						.thenComparing( p -> p.getB().getLabelB() ) );
 /*
 		for ( int i = 0; i < viewIdsGlobal.size() - 1; ++i )
 A:			for ( int j = i+1; j < viewIdsGlobal.size(); ++j )
